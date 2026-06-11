@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # ─── MySQL Database ────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: cv-analyzer-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: cv_analyzer
+      MYSQL_USER: ${DB_USERNAME:-cvuser}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-cvpassword}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/src/main/resources/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cv-analyzer-net
+
+  # ─── Spring Boot Backend ───────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cv-analyzer-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # Database
+      DB_USERNAME: ${DB_USERNAME:-cvuser}
+      DB_PASSWORD: ${DB_PASSWORD:-cvpassword}
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/cv_analyzer?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true
+
+      # JWT
+      JWT_SECRET: ${JWT_SECRET:-mySecretKey12345678901234567890123456789012345}
+
+      # AI Provider
+      AI_PROVIDER: ${AI_PROVIDER}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+      LMSTUDIO_BASE_URL: ${LMSTUDIO_BASE_URL}
+      LMSTUDIO_MODEL: ${LMSTUDIO_MODEL}
+
+      # Mail
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+
+      # App
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      UPLOAD_DIR: /app/uploads
+
+      # Google OAuth2 (optional ID-token audience check)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+
+    ports:
+      - "8080:8080"
+    volumes:
+      - resume_uploads:/app/uploads
+    networks:
+      - cv-analyzer-net
+
+  # ─── React Frontend ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8080/api}
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    container_name: cv-analyzer-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3001:80"
+    networks:
+      - cv-analyzer-net
+
+volumes:
+  mysql_data:
+    driver: local
+  resume_uploads:
+    driver: local
+
+networks:
+  cv-analyzer-net:
+    driver: bridge
